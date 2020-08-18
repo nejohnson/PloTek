@@ -74,7 +74,7 @@ proc plotScopeTrace {tracenum title} {
 	puts $of "\$ScopeTrace << EOD"
 	for {set row 0} {$row < $rows} {incr row} {
 		set point [data get rect [expr $base + 3] $row [expr $base + 4] $row]
-		puts $of "[lindex [lindex $point 0] 0] [lindex [lindex $point 0] 1] $vertOffset"
+		puts $of [format "%.6f %.6f %.6f" [lindex [lindex $point 0] 0] [expr [lindex [lindex $point 0] 1] + $vertScale * $yZero] $vertOffset]
 	}
 	puts $of "EOD"
 
