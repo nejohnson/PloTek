@@ -17,6 +17,8 @@ package require struct::matrix
 # Global data
 ::struct::matrix data
 
+set monochrome 0
+
 # ############################################################################
 #
 # Load the CSV data file into memory
@@ -68,6 +70,7 @@ proc generateScopeTraces {title} {
 	global data
 	global plotList
 	global plotEn
+	global monochrome
 
 	puts "Generating Scope Traces..."
 
@@ -79,8 +82,6 @@ proc generateScopeTraces {title} {
 
 	foreach l $plotList {
 		set enabled $plotEn($l)
-		puts "Plot $i @ $l == $enabled"
-	
 		set tracenum $l
 		set base [expr $tracenum * 6]
 
@@ -101,7 +102,8 @@ proc generateScopeTraces {title} {
 		set note			[lindex $params 15]
 
 		if {$i == 0} {
-			puts "Setting up..."
+			puts $ofile "set key off"
+			puts $ofile "set lmargin 10"
 
 			if {$title != ""} {
 				#puts "set title \"[data get cell [expr $base + 1] 6] ([data get cell [expr $base + 1] 16])\""
@@ -155,14 +157,18 @@ proc generateScopeTraces {title} {
 		}
 
 		if {$enabled} {
-			puts "Processing trace $tracenum"
 			puts $ofile "\$ScopeTrace$i << EOD"
 			for {set row 0} {$row < $rows} {incr row} {
 				set point [data get rect [expr $base + 3] $row [expr $base + 4] $row]
 				puts $ofile [format "%.6f %.6f %.6f" [lindex [lindex $point 0] 0] [expr [lindex [lindex $point 0] 1] + $vertScale * $yZero] $vertOffset]
 			}
 			puts $ofile "EOD"
-			set thisplot " \$ScopeTrace$i using 1:2 with lines title \"$source\", \$ScopeTrace$i using 1:3 with lines title \"\", "
+			set colour ""
+			if {$monochrome} {
+				set colour "lc \"black\""
+			}
+			set thisplot " \$ScopeTrace$i using 1:2 with lines $colour title \"$source\" at beginning,"
+			# \$ScopeTrace$i using 1:3 with lines title \"\" $colour, "
 			append plotcommand $thisplot
 		}
 		incr i
@@ -180,6 +186,8 @@ proc generateScopeTraces {title} {
 # Set up the GUI
 #
 proc buildGUI {} {
+	global monochrome
+
    . config -menu .menubar
    menu .menubar
 
@@ -191,6 +199,8 @@ proc buildGUI {} {
 
    .menubar add cascade -label "Traces" -menu .menubar.plot
    menu .menubar.plot -tearoff no
+
+   .menubar add checkbutton -label "Monochrome" -variable monochrome
    
    .menubar add command -label "PLOT!" -command { m_plotTraces }
    
