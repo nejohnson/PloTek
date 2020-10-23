@@ -1,6 +1,6 @@
 #!/bin/sh
 # Start wish from command shell \
-exec wish -f "$0" ${1+"$@"}
+exec tclsh "$0" ${1+"$@"}
 
 #
 # ProcTek - process CSV files from a Tektronix Scope
@@ -10,6 +10,7 @@ exec wish -f "$0" ${1+"$@"}
 # Tested with files from a Tek DPO2024B
 #
 
+package require Tk
 package require csv
 package require struct::matrix
 
@@ -33,25 +34,40 @@ proc readDataFile {fname} {
 # Scan a data file enumerating the scope traces
 #
 proc scanDataFile {} {
-   global data
-   
-   set i 0
-   for {set c 0} {$c < [data columns]} {incr c 6} {
-      set name [data get cell [expr $c + 1] 6]
-      .menubar.plot add command -label "$i: $name" -command "m_plotTrace $i"
-      incr i
-   }
+	global data
+	global plotList
+	
+	set plotList {}
+	set trc 0
+	set i 0
+	
+	for {set c 0} {$c < [data columns]} {incr c 6} {
+		set name [data get cell [expr $c + 1] 6]
+		if {[string match "Glitch*" $name] == 0} {
+			.menubar.plot add checkbutton -label "$i: $name" -variable plot$trc
+			lappend plotList plot$trc 
+			incr i
+		}
+		incr trc
+	}
 }
 
 # ############################################################################
 #
 # Process a single trace
 #
-proc plotScopeTrace {tracenum title} {
+proc generateScopeTraces {title} {
 	global data
+	global plotList
+	
+	foreach l $plotList {
+		puts $l
+	}
+	
+	return
 
-   set of [open "plot.cmd" w]
-   
+	set ofile [open "tekplots.cmd" w]
+
 	set rows [data rows]
 	set base [expr $tracenum * 6]
 	
@@ -71,17 +87,17 @@ proc plotScopeTrace {tracenum title} {
 	set probeAtten		[lindex $params 14]
 	set note			[lindex $params 15]
 
-	puts $of "\$ScopeTrace << EOD"
+	puts $ofile "\$ScopeTrace << EOD"
 	for {set row 0} {$row < $rows} {incr row} {
 		set point [data get rect [expr $base + 3] $row [expr $base + 4] $row]
-		puts $of [format "%.6f %.6f %.6f" [lindex [lindex $point 0] 0] [expr [lindex [lindex $point 0] 1] + $vertScale * $yZero] $vertOffset]
+		puts $ofile [format "%.6f %.6f %.6f" [lindex [lindex $point 0] 0] [expr [lindex [lindex $point 0] 1] + $vertScale * $yZero] $vertOffset]
 	}
-	puts $of "EOD"
+	puts $ofile "EOD"
 
 	if {$title != ""} {
 		#puts "set title \"[data get cell [expr $base + 1] 6] ([data get cell [expr $base + 1] 16])\""
-		puts $of "set title \"$title\""
-		puts $of "show title"
+		puts $ofile "set title \"$title\""
+		puts $ofile "show title"
 	}
 
 	set div $horizScale
@@ -99,8 +115,8 @@ proc plotScopeTrace {tracenum title} {
 		set mult "n"
 	}
 	set div [expr int($div)]
-	puts $of "set xlabel \"$div $mult$horizUnits/div\""
-	puts $of "set xtics format \"\""
+	puts $ofile "set xlabel \"$div $mult$horizUnits/div\""
+	puts $ofile "set xtics format \"\""
 
 	# Note to self: need to accomodate probe attenuation
 
@@ -119,18 +135,18 @@ proc plotScopeTrace {tracenum title} {
 		set mult "n"
 	}
 	set div [expr int($div)]
-	puts $of "set ylabel \"$div $mult$vertUnits/div\""
-	puts $of "set yrange \[ -[expr $vertScale * 4] : [expr $vertScale * 4]\]"
-	puts $of "set ytics $vertScale format \"\""
+	puts $ofile "set ylabel \"$div $mult$vertUnits/div\""
+	puts $ofile "set yrange \[ -[expr $vertScale * 4] : [expr $vertScale * 4]\]"
+	puts $ofile "set ytics $vertScale format \"\""
 
-	puts $of "set grid xtics ytics"
+	puts $ofile "set grid xtics ytics"
 	
-   puts $of "set terminal gif"
-   puts $of "set output \"plot$tracenum.gif\""
+   puts $ofile "set terminal gif"
+   puts $ofile "set output \"tekplots.gif\""
    
-   puts $of "plot \$ScopeTrace using 1:2 with lines title \"$source\", \$ScopeTrace using 1:3 with lines title \"\""
+   puts $ofile "plot \$ScopeTrace using 1:2 with lines title \"$source\", \$ScopeTrace using 1:3 with lines title \"\""
    
-   close $of
+   close $ofile
 }
 
 # ############################################################################
@@ -147,9 +163,10 @@ proc buildGUI {} {
    .menubar.file add separator
    .menubar.file add command -label "Exit" -command { exit }
 
-   .menubar add cascade -label "Plot" -menu .menubar.plot
+   .menubar add cascade -label "Traces" -menu .menubar.plot
    menu .menubar.plot -tearoff no
    
+   .menubar add command -label "PLOT!" -command { m_plotTraces }
    
    .menubar add cascade -label "Help" -menu .menubar.help
    menu .menubar.help -tearoff no
@@ -181,16 +198,13 @@ proc m_openFile {} {
 #
 # Menu action: plot a trace
 #
-proc m_plotTrace {n} {
-   global fname 
-      
-   plotScopeTrace $n ""
-   if { ![catch "exec gnuplot plot.cmd -" msg] } {
-      image create photo plot -file "plot$n.gif"
+proc m_plotTraces {} {
+   generateScopeTraces ""
+   if { ![catch "exec gnuplot tekplots.cmd -" msg] } {
+      image create photo plot -file "tekplots.gif"
       .c config -width [image width plot] -height [image height plot]
       .c create image [expr [image width plot]/2] [expr [image height plot]/2] \
          -image plot -anchor c
-   
    }
 }
 
@@ -204,6 +218,4 @@ if {$argc > 0} {
    set fname [lindex $argv 0]
    readDataFile $fname
    scanDataFile
-  # m_plotTrace
 }
-
