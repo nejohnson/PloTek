@@ -19,6 +19,14 @@ package require struct::matrix
 
 set monochrome 0
 
+# Plot size
+#  small  = 640 x 480
+#  medium = 1200 x 800
+#  large  = 1920 x 1280
+#set plotSize "640,480"
+set plotSize "1200,800"
+#set plotSize "1920,1280"
+
 # ############################################################################
 #
 # Load the CSV data file into memory
@@ -71,6 +79,7 @@ proc generateScopeTraces {title} {
 	global plotList
 	global plotEn
 	global monochrome
+	global plotSize
 
 	puts "Generating Scope Traces..."
 
@@ -152,7 +161,7 @@ proc generateScopeTraces {title} {
 
 			puts $ofile "set grid xtics ytics"
 
-			puts $ofile "set terminal gif"
+			puts $ofile "set terminal gif size $plotSize"
 			puts $ofile "set output \"tekplots.gif\""
 		}
 
