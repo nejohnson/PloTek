@@ -14,30 +14,50 @@ package require Tk
 package require csv
 package require struct::matrix
 
-# Global data
-::struct::matrix data
+# Plot data is stored in a matrix for easy CSV import and processing
+::struct::matrix plotData
 
-set monochrome 0
+# All info about the plot is stored in a global array
 
-# Plot size
-#  small  = 640 x 480
-#  medium = 1200 x 800
-#  large  = 1920 x 1280
-#set plotSize "640,480"
-set plotSize "1200,800"
-#set plotSize "1920,1280"
+proc initPlot {} {
+	global plotData
+	global plotInfo
 
-# ############################################################################
+	if {[plotData columns] > 0} {
+		plotData destroy
+		::struct::matrix plotData
+		unset plotInfo
+	}
+	
+	# -- Default to colour plots
+	set plotInfo(monochrome) false
+
+	# -- Define plot sizes, then set default to medium
+	set plotInfo(size,large)  "1920,1280"
+	set plotInfo(size,medium) "1200,800"
+	set plotInfo(size,small)  "640,480"
+	set plotInfo(size)        medium
+
+	# -- Plots can have titles
+	set plotInfo(title) ""
+}
+
+
+############################################################################
 #
 # Load the CSV data file into memory
 #
 proc readDataFile {fname} {
-	global data
+	global plotData
 	
+	initPlot
 	puts "Reading $fname ..."
 	set chan [open $fname]
-	csv::read2matrix $chan data  , auto
+	csv::read2matrix $chan plotData , auto
 	close $chan
+
+	enumerateTraces
+
 	puts "Done."
 }
 
@@ -45,57 +65,50 @@ proc readDataFile {fname} {
 #
 # Scan a data file enumerating the scope traces
 #
-proc scanDataFile {} {
-	global data
-	global plotList
-	global plotEn
-	
-	set plotList {}
+proc enumerateTraces {} {
+	global plotData
+	global plotInfo
+
 	set trc 0
 	set i 0
 	
 	puts "Scanning data..."
-	for {set c 0} {$c < [data columns]} {incr c 6} {
-		set name [data get cell [expr $c + 1] 6]
+	for {set c 0} {$c < [plotData columns]} {incr c 6} {
+		set name [plotData get cell [expr $c + 1] 6]
 		puts "  found dataset $name"
 		if {[string match "Glitch*" $name] == 0} {
-			.menubar.plot add checkbutton -label "$i: $name" -variable plotEn($trc)
-			set plotEn($trc) 0
-			lappend plotList $trc 
-			puts "  $trc: adding plot"
+			set plotInfo(trace,$i,idx) $c
+			set plotInfo(trace,$i,name) $name
+			set plotInfo(trace,$i,show) false
+			puts "  adding plot $i"
 			incr i
 		}
-		incr trc
 	}
+	set plotInfo(trace,count) $i
 	puts "Done."
 }
 
 # ############################################################################
 #
-# Process a single trace
+# Generate plot data based on the data in plotData and the settings in plotInfo
 #
-proc generateScopeTraces {title} {
-	global data
-	global plotList
-	global plotEn
-	global monochrome
-	global plotSize
+proc generatePlot {} {
+	global plotData
+	global plotInfo
 
 	puts "Generating Scope Traces..."
 
-	set i 0
 	set ofile [open "tekplots.cmd" w]
-	set rows [data rows]
+	set rows [plotData rows]
 
-	set plotcommand ""
+	set plotCmd ""
 
-	foreach l $plotList {
-		set enabled $plotEn($l)
-		set tracenum $l
-		set base [expr $tracenum * 6]
+	for {set i 0} {$i < $plotInfo(trace,count)} {incr i} {
+		set enabled $plotInfo(trace,$i,show)
+		set base    $plotInfo(trace,$i,idx)
 
 		# Extract trace parameters
-		set params [data get rect [expr $base + 1] 0 [expr $base + 1] 15]
+		set params          [plotData get rect [expr $base + 1] 0 [expr $base + 1] 15]
 		set recLength 		[lindex $params 0]
 		set sampleInterval 	[lindex $params 1]
 		set triggerPoint	[lindex $params 2]
@@ -114,9 +127,9 @@ proc generateScopeTraces {title} {
 			puts $ofile "set key off"
 			puts $ofile "set lmargin 10"
 
-			if {$title != ""} {
+			if {$plotInfo(title) != ""} {
 				#puts "set title \"[data get cell [expr $base + 1] 6] ([data get cell [expr $base + 1] 16])\""
-				puts $ofile "set title \"$title\""
+				puts $ofile "set title \"$plotInfo(title)\""
 				puts $ofile "show title"
 			}
 
@@ -134,6 +147,7 @@ proc generateScopeTraces {title} {
 				set div [expr $div * 1000]
 				set mult "n"
 			}
+			puts "H: $div"
 			set div [expr int($div)]
 			puts $ofile "set xlabel \"$div $mult$horizUnits/div\""
 			puts $ofile "set xtics format \"\""
@@ -154,6 +168,7 @@ proc generateScopeTraces {title} {
 				set div [expr $div * 1000]
 				set mult "n"
 			}
+			puts "V: $div"
 			set div [expr int($div)]
 			puts $ofile "set ylabel \"$div $mult$vertUnits/div\""
 			puts $ofile "set yrange \[ -[expr $vertScale * 4] : [expr $vertScale * 4]\]"
@@ -161,29 +176,32 @@ proc generateScopeTraces {title} {
 
 			puts $ofile "set grid xtics ytics"
 
-			puts $ofile "set terminal gif size $plotSize"
+			set size $plotInfo(size,$plotInfo(size))
+			puts "Plot size = $size"
+			puts $ofile "set terminal gif size $size"
 			puts $ofile "set output \"tekplots.gif\""
 		}
+
+		puts " Trace $i is $enabled"
 
 		if {$enabled} {
 			puts $ofile "\$ScopeTrace$i << EOD"
 			for {set row 0} {$row < $rows} {incr row} {
-				set point [data get rect [expr $base + 3] $row [expr $base + 4] $row]
+				set point [plotData get rect [expr $base + 3] $row [expr $base + 4] $row]
 				puts $ofile [format "%.6f %.6f %.6f" [lindex [lindex $point 0] 0] [expr [lindex [lindex $point 0] 1] + $vertScale * $yZero] $vertOffset]
 			}
 			puts $ofile "EOD"
 			set colour ""
-			if {$monochrome} {
+			if {$plotInfo(monochrome)} {
 				set colour "lc \"black\""
 			}
-			set thisplot " \$ScopeTrace$i using 1:2 with lines $colour title \"$source\" at beginning,"
+			set thisplot " \$ScopeTrace$i using 1:2 with lines $colour title \"$plotInfo(trace,$i,name)\" at beginning,"
 			# \$ScopeTrace$i using 1:3 with lines title \"\" $colour, "
-			append plotcommand $thisplot
+			append plotCmd $thisplot
 		}
-		incr i
 	}
 
-	puts $ofile "plot $plotcommand"
+	puts $ofile "plot $plotCmd"
 
 	puts "Done."
    
@@ -195,27 +213,33 @@ proc generateScopeTraces {title} {
 # Set up the GUI
 #
 proc buildGUI {} {
-	global monochrome
+	global plotInfo
 
    . config -menu .menubar
    menu .menubar
 
    .menubar add cascade -label "File" -menu .menubar.file
-   menu .menubar.file -tearoff no
-   .menubar.file add command -label "Open" -command { m_openFile }
-   .menubar.file add separator
-   .menubar.file add command -label "Exit" -command { exit }
+      menu .menubar.file -tearoff no
+      .menubar.file add command -label "Open" -command { m_openFile }
+      .menubar.file add separator
+      .menubar.file add command -label "Exit" -command { exit }
 
-   .menubar add cascade -label "Traces" -menu .menubar.plot
-   menu .menubar.plot -tearoff no
+   .menubar add command -label "Traces" -command { m_Traces }
 
-   .menubar add checkbutton -label "Monochrome" -variable monochrome
+   .menubar add cascade -label "Options" -menu .menubar.options
+      menu .menubar.options -tearoff no
+      .menubar.options add checkbutton -label "Monochrome" -variable plotInfo(monochrome)
+	  .menubar.options add cascade -label "Size" -menu .menubar.options.size
+	  menu .menubar.options.size -tearoff no
+	  .menubar.options.size add radiobutton -label "Small" -variable plotInfo(size)  -value "small"
+	  .menubar.options.size add radiobutton -label "Medium" -variable plotInfo(size) -value "medium"
+	  .menubar.options.size add radiobutton -label "Large" -variable plotInfo(size)  -value "large"
    
-   .menubar add command -label "PLOT!" -command { m_plotTraces }
+   .menubar add command -label "PLOT" -command { m_plotTraces }
    
    .menubar add cascade -label "Help" -menu .menubar.help
-   menu .menubar.help -tearoff no
-   .menubar.help add command -label "About" -command {}
+      menu .menubar.help -tearoff no
+      .menubar.help add command -label "About" -command { m_About }
 
    canvas .c
    pack .c -expand true -fill both -side top -anchor n
@@ -223,19 +247,80 @@ proc buildGUI {} {
 
 # ############################################################################
 #
+# Menu action: show about dialog box
+#
+proc m_About {} {
+	tk_messageBox -title "About" \
+		-message "PloTek - Tektronix Plot Post Processor" \
+		-detail "Copyright (c) 2020 Neil Johnson" \
+		-type ok \
+		-icon info
+}
+
+# ############################################################################
+#
+# Menu action: manage traces
+#
+proc m_Traces {} {
+	global plotInfo
+	set button 0
+
+	toplevel .t 
+	wm title .t "Plotek - Traces"
+	
+	frame .t.l -relief raised -borderwidth 2
+	# Headings
+	label .t.l.show -text "Show"
+	label .t.l.label -text "Label"
+	grid .t.l.show .t.l.label -sticky nsew
+	grid columnconfigure .t.l 0 -weight 0
+	grid columnconfigure .t.l 1 -weight 1
+	frame .t.l.bar -height 1 -bg black
+	grid .t.l.bar - -sticky news -pady 1
+
+	# Traces
+	for {set i 0} {$i < $plotInfo(trace,count)} {incr i} {
+		puts " UI trace $i"
+		checkbutton .t.l.cb$i -variable plotInfo(trace,$i,show)
+		entry .t.l.name$i -width 20 -relief sunken -bd 2 -textvariable plotInfo(trace,$i,name)
+
+		grid .t.l.cb$i .t.l.name$i -sticky nsew -pady 1
+	}
+
+
+	# Buttons
+	frame .t.b
+	button .t.b.cancel -text "Cancel" -command {set button 0}
+	button .t.b.ok     -text "Ok"     -command {set button 1}
+	pack .t.b.cancel -side right -fill y -padx 3 -pady 3
+	pack .t.b.ok     -side right -fill y -padx 3 -pady 3
+
+	pack .t.b -side bottom -anchor center
+	pack .t.l -fill both -expand true
+
+	# Grab focus, wait for a button action, the close and destroy
+	set oldFocus [focus]
+	grab set .t
+	focus .t
+	tkwait variable button
+	destroy .t
+	focus $oldFocus
+	return button
+}
+
+
+# ############################################################################
+#
 # Menu action: open a file and read it
 #
 proc m_openFile {} {
-   global fname
-   
    set types {
       {{CSV Files} {.csv}}
    }
    set fname [tk_getOpenFile -filetypes $types]
    
    if {$fname != ""} {
-      readDataFile $fname
-      scanDataFile
+       readDataFile $fname
    }
 }
 
@@ -244,10 +329,10 @@ proc m_openFile {} {
 # Menu action: plot a trace
 #
 proc m_plotTraces {} {
-	puts "Sending to gnuplot..."
-   generateScopeTraces ""
+   puts "Sending to gnuplot..."
+   generatePlot
    if { ![catch "exec gnuplot tekplots.cmd" msg] } {
-	   puts "Loading plot graphic..."
+	  puts "Loading plot graphic..."
       image create photo plot -file "tekplots.gif"
       .c config -width [image width plot] -height [image height plot]
       .c create image [expr [image width plot]/2] [expr [image height plot]/2] \
@@ -265,5 +350,4 @@ buildGUI
 if {$argc > 0} {
    set fname [lindex $argv 0]
    readDataFile $fname
-   scanDataFile
 }
